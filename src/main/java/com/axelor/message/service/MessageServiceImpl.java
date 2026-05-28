@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -25,6 +25,7 @@ import com.axelor.db.Model;
 import com.axelor.db.Query;
 import com.axelor.i18n.I18n;
 import com.axelor.inject.Beans;
+import com.axelor.mail.MailAccount;
 import com.axelor.mail.MailBuilder;
 import com.axelor.mail.MailSender;
 import com.axelor.mail.SmtpAccount;
@@ -45,25 +46,26 @@ import com.axelor.utils.helpers.json.JsonHelper;
 import com.google.common.base.Joiner;
 import com.google.common.base.Preconditions;
 import com.google.common.base.Strings;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Sets;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
+import jakarta.mail.MessagingException;
+import jakarta.mail.internet.MimeUtility;
+import jakarta.persistence.LockModeType;
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
 import java.lang.invoke.MethodHandles;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.List;
 import java.util.Set;
 import java.util.concurrent.TimeUnit;
-import javax.mail.MessagingException;
-import javax.mail.internet.MimeUtility;
-import javax.persistence.LockModeType;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.apache.commons.collections.CollectionUtils;
 import org.apache.groovy.util.Maps;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -107,10 +109,10 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
       EmailAccount emailAccount,
       String signature) {
 
-    emailAccount =
-        emailAccount != null
-            ? Beans.get(EmailAccountRepository.class).find(emailAccount.getId())
-            : emailAccount;
+    if (emailAccount != null) {
+      emailAccount = Beans.get(EmailAccountRepository.class).find(emailAccount.getId());
+    }
+
     Message message =
         createMessage(
             content,
@@ -152,7 +154,7 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
       int mediaTypeSelect,
       EmailAccount emailAccount,
       String signature,
-      Boolean isForTemporaryMessage) {
+      boolean isForTemporaryMessage) {
 
     if (!isForTemporaryMessage) {
       return createMessage(
@@ -172,10 +174,10 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
           signature);
     }
 
-    emailAccount =
-        emailAccount != null
-            ? Beans.get(EmailAccountRepository.class).find(emailAccount.getId())
-            : emailAccount;
+    if (emailAccount != null) {
+      emailAccount = Beans.get(EmailAccountRepository.class).find(emailAccount.getId());
+    }
+
     Message message =
         createMessage(
             content,
@@ -277,34 +279,31 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
     try {
       sendMessage(message, false);
     } catch (MessagingException e) {
-      ExceptionHelper.trace(e);
+      ExceptionHelper.error(e);
     }
     return message;
   }
 
   @Override
-  public Message sendMessage(Message message, Boolean isTemporaryEmail)
+  public Message sendMessage(Message message, boolean isTemporaryEmail)
       throws MessagingException, IOException {
 
-    if (!isTemporaryEmail) {
-      if (message.getMediaTypeSelect() == MessageRepository.MEDIA_TYPE_MAIL) {
-        message = sendByMail(message);
-      } else if (message.getMediaTypeSelect() == MessageRepository.MEDIA_TYPE_EMAIL) {
-        message = sendByEmail(message);
-      } else if (message.getMediaTypeSelect() == MessageRepository.MEDIA_TYPE_CHAT) {
-        message = sendToUser(message);
-      } else if (message.getMediaTypeSelect() == MessageRepository.MEDIA_TYPE_SMS) {
-        message = sendSMS(message);
-      }
-    } else {
-      if (message.getMediaTypeSelect() != MessageRepository.MEDIA_TYPE_EMAIL) {
+    Integer mediaTypeSelect = message.getMediaTypeSelect();
+    if (isTemporaryEmail) {
+      if (mediaTypeSelect != MessageRepository.MEDIA_TYPE_EMAIL) {
         throw new IllegalStateException(
             I18n.get(MessageExceptionMessage.TEMPORARY_EMAIL_MEDIA_TYPE_ERROR));
       }
-      message = sendByEmail(message, isTemporaryEmail);
+      return sendByEmail(message, true);
     }
 
-    return message;
+    return switch (mediaTypeSelect) {
+      case MessageRepository.MEDIA_TYPE_MAIL -> sendByMail(message);
+      case MessageRepository.MEDIA_TYPE_EMAIL -> sendByEmail(message);
+      case MessageRepository.MEDIA_TYPE_CHAT -> sendToUser(message);
+      case MessageRepository.MEDIA_TYPE_SMS -> sendSMS(message);
+      default -> message;
+    };
   }
 
   @Override
@@ -342,7 +341,7 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
 
   @Override
   @Transactional(rollbackOn = {Exception.class})
-  public Message sendByEmail(Message message, Boolean isTemporaryEmail) throws MessagingException {
+  public Message sendByEmail(Message message, boolean isTemporaryEmail) throws MessagingException {
 
     EmailAccount mailAccount = message.getMailAccount();
 
@@ -352,7 +351,7 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
 
     log.debug("Sending email...");
     MailAccountService mailAccountService = Beans.get(MailAccountService.class);
-    com.axelor.mail.MailAccount account =
+    MailAccount account =
         new SmtpAccount(
             mailAccount.getHost(),
             mailAccount.getPort().toString(),
@@ -386,62 +385,58 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
         fromAddress = String.format("%s <%s>", fromName, mailAccount.getFromAddress());
       } else if (message.getFromEmailAddress() != null) {
         if (!Strings.isNullOrEmpty(message.getFromEmailAddress().getAddress())) {
-          log.debug(
-              "Override from :::  {}", this.getFullEmailAddress(message.getFromEmailAddress()));
-          mailBuilder.from(this.getFullEmailAddress(message.getFromEmailAddress()));
+          String fullEmailAddress = this.getFullEmailAddress(message.getFromEmailAddress());
+          log.debug("Override from :::  {}", fullEmailAddress);
+          mailBuilder.from(fullEmailAddress);
         } else {
           throw new IllegalStateException(I18n.get(MessageExceptionMessage.MESSAGE_5));
         }
       }
       mailBuilder.from(fromAddress);
     }
-    if (replytoRecipients != null && !replytoRecipients.isEmpty()) {
+
+    if (CollectionUtils.isNotEmpty(replytoRecipients)) {
       mailBuilder.replyTo(Joiner.on(",").join(replytoRecipients));
     }
-    if (!toRecipients.isEmpty()) {
+    if (CollectionUtils.isNotEmpty(toRecipients)) {
       mailBuilder.to(Joiner.on(",").join(toRecipients));
     }
-    if (ccRecipients != null && !ccRecipients.isEmpty()) {
+    if (CollectionUtils.isNotEmpty(ccRecipients)) {
       mailBuilder.cc(Joiner.on(",").join(ccRecipients));
     }
-    if (bccRecipients != null && !bccRecipients.isEmpty()) {
+    if (CollectionUtils.isNotEmpty(bccRecipients)) {
       mailBuilder.bcc(Joiner.on(",").join(bccRecipients));
     }
-    if (!Strings.isNullOrEmpty(message.getContent())) {
-      mailBuilder.html(message.getContent());
-    } else {
-      mailBuilder.html("");
-    }
 
-    if (!Boolean.TRUE.equals(isTemporaryEmail)) {
-      for (MetaAttachment metaAttachment : getMetaAttachments(message)) {
-        MetaFile metaFile = metaAttachment.getMetaFile();
-        mailBuilder.attach(metaFile.getFileName(), MetaFiles.getPath(metaFile).toString());
-      }
+    String content = Strings.isNullOrEmpty(message.getContent()) ? "" : message.getContent();
+    mailBuilder.html(content);
 
-      getEntityManager().flush();
-      getEntityManager().lock(message, LockModeType.PESSIMISTIC_WRITE);
-      // send email using a separate process to avoid thread blocking
-      sendMailQueueService.submitMailJob(mailBuilder, message);
-
-    } else {
-
+    if (isTemporaryEmail) {
       // Sending email(message) which is not saved.
       // No separate thread or JPA persistence lock required
+
       try {
         mailBuilder.send();
       } catch (IOException e) {
         log.error("Exception when sending email: {}", e.getMessage(), e);
       }
-
       log.debug("Email sent.");
+      return message;
     }
 
+    for (MetaAttachment metaAttachment : getMetaAttachments(message)) {
+      MetaFile metaFile = metaAttachment.getMetaFile();
+      mailBuilder.attach(metaFile.getFileName(), MetaFiles.getPath(metaFile).toString());
+    }
+
+    getEntityManager().flush();
+    getEntityManager().lock(message, LockModeType.PESSIMISTIC_WRITE);
+    // send email using a separate process to avoid thread blocking
+    sendMailQueueService.submitMailJob(mailBuilder, message);
     return message;
   }
 
   @Override
-  @SuppressWarnings("deprecation")
   @Transactional(rollbackOn = {Exception.class})
   public Message sendSMS(Message message) throws IOException {
 
@@ -468,13 +463,13 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
             "recipient",
             message.getToMobilePhone(),
             "content",
-            message.getContent().replaceAll("<\\/*\\w+>", ""),
+            message.getContent().replaceAll("</*\\w+>", ""),
             "type",
             "transactional");
 
-    String datas = JsonHelper.toJson(map);
+    String data = JsonHelper.toJson(map);
 
-    RequestBody body = RequestBody.create(mediaType, datas);
+    RequestBody body = RequestBody.create(data, mediaType);
     Request request =
         new Request.Builder()
             .url(appSettingsMessageService.sendingblueUrlSendsms())
@@ -513,18 +508,14 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
 
   public List<String> getEmailAddresses(Set<EmailAddress> emailAddressSet) {
 
-    List<String> recipients = Lists.newArrayList();
-    if (emailAddressSet != null) {
-      for (EmailAddress emailAddress : emailAddressSet) {
-
-        if (Strings.isNullOrEmpty(emailAddress.getAddress())) {
-          continue;
-        }
-        recipients.add(this.getFullEmailAddress(emailAddress));
-      }
+    if (CollectionUtils.isEmpty(emailAddressSet)) {
+      return Collections.emptyList();
     }
 
-    return recipients;
+    return emailAddressSet.stream()
+        .filter(emailAddress -> !Strings.isNullOrEmpty(emailAddress.getAddress()))
+        .map(this::getFullEmailAddress)
+        .toList();
   }
 
   @Override
@@ -535,8 +526,7 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
   @Override
   @SuppressWarnings("unchecked")
   @Transactional(rollbackOn = {Exception.class})
-  public Message regenerateMessage(Message message)
-      throws IOException, ClassNotFoundException, InstantiationException, IllegalAccessException {
+  public Message regenerateMessage(Message message) throws ClassNotFoundException {
     Preconditions.checkNotNull(
         message.getTemplate(),
         I18n.get("Cannot regenerate message without template associated to message."));
@@ -545,7 +535,7 @@ public class MessageServiceImpl extends JpaSupport implements MessageService {
       throw new IllegalStateException(I18n.get("Cannot regenerate message without related model."));
     }
 
-    MultiRelated multiRelated = message.getMultiRelatedList().get(0);
+    MultiRelated multiRelated = message.getMultiRelatedList().getFirst();
 
     Model model =
         JPA.all((Class<? extends Model>) Class.forName(multiRelated.getRelatedToSelect()))

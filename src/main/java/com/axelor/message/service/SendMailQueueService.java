@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -20,24 +20,24 @@ package com.axelor.message.service;
 import com.axelor.auth.AuthUtils;
 import com.axelor.auth.db.User;
 import com.axelor.auth.db.repo.UserRepository;
+import com.axelor.concurrent.ContextAware;
 import com.axelor.db.JpaSupport;
-import com.axelor.db.tenants.TenantAware;
 import com.axelor.db.tenants.TenantResolver;
 import com.axelor.event.Observes;
 import com.axelor.events.ShutdownEvent;
 import com.axelor.mail.MailBuilder;
 import com.axelor.message.db.Message;
 import com.axelor.message.db.repo.MessageRepository;
-import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityNotFoundException;
+import jakarta.persistence.LockModeType;
+import jakarta.persistence.PersistenceException;
 import java.lang.invoke.MethodHandles;
 import java.time.LocalDateTime;
 import java.util.concurrent.Callable;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
-import javax.persistence.EntityNotFoundException;
-import javax.persistence.LockModeType;
-import javax.persistence.PersistenceException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -56,7 +56,7 @@ public class SendMailQueueService extends JpaSupport {
   }
 
   private final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
-  protected ExecutorService executor = Executors.newSingleThreadExecutor();
+  protected final ExecutorService executor = Executors.newSingleThreadExecutor();
 
   /**
    * Submit a mail job to an executor which will send mails in a separate thread.
@@ -106,22 +106,19 @@ public class SendMailQueueService extends JpaSupport {
           return true;
         };
 
-    String tenantId = TenantResolver.currentTenantIdentifier();
-    String tenantHost = TenantResolver.currentTenantHost();
-
+    Runnable job =
+        () -> {
+          try {
+            callable.call();
+          } catch (Exception e) {
+            throw new IllegalStateException(e);
+          }
+        };
     executor.submit(
-        () ->
-            new TenantAware(
-                    () -> {
-                      try {
-                        callable.call();
-                      } catch (Exception e) {
-                        throw new IllegalStateException(e);
-                      }
-                    })
-                .tenantHost(tenantHost)
-                .tenantId(tenantId)
-                .run());
+        ContextAware.of()
+            .withTenantId(TenantResolver.currentTenantIdentifier())
+            .withBaseUrl(TenantResolver.currentTenantHost())
+            .build(job));
   }
 
   /**

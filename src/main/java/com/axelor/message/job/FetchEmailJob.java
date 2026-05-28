@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -21,17 +21,17 @@ import com.axelor.message.db.EmailAccount;
 import com.axelor.message.db.repo.EmailAccountRepository;
 import com.axelor.message.service.MailAccountService;
 import com.axelor.utils.helpers.ExceptionHelper;
-import com.google.inject.Inject;
+import jakarta.inject.Inject;
+import jakarta.mail.MessagingException;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
 import java.util.List;
-import javax.mail.MessagingException;
 import org.quartz.Job;
 import org.quartz.JobExecutionContext;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-/** An example {@link Job} class that prints a some messages to the stderr. */
+/** An example {@link Job} class that prints some messages to the stderr. */
 public class FetchEmailJob implements Job {
 
   protected final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
@@ -59,7 +59,7 @@ public class FetchEmailJob implements Job {
         Integer total = mailAccountService.fetchEmails(account, true);
         log.debug("Email fetched for account: {}, total: {} ", account.getName(), total);
       } catch (MessagingException | IOException e) {
-        ExceptionHelper.trace(e);
+        ExceptionHelper.error(e);
       }
     }
   }

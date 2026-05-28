@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -19,6 +19,7 @@ package com.axelor.message.service;
 
 import com.axelor.i18n.I18n;
 import com.axelor.mail.ImapAccount;
+import com.axelor.mail.MailAccount;
 import com.axelor.mail.MailConstants;
 import com.axelor.mail.MailParser;
 import com.axelor.mail.MailReader;
@@ -36,8 +37,21 @@ import com.axelor.utils.helpers.ExceptionHelper;
 import com.axelor.utils.helpers.date.LocalDateTimeHelper;
 import com.axelor.utils.service.CipherService;
 import com.google.common.collect.Lists;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.activation.DataSource;
+import jakarta.inject.Inject;
+import jakarta.mail.AuthenticationFailedException;
+import jakarta.mail.FetchProfile;
+import jakarta.mail.Flags;
+import jakarta.mail.Folder;
+import jakarta.mail.MessagingException;
+import jakarta.mail.NoSuchProviderException;
+import jakarta.mail.Session;
+import jakarta.mail.Store;
+import jakarta.mail.Transport;
+import jakarta.mail.internet.InternetAddress;
+import jakarta.mail.internet.MimeMessage;
+import jakarta.mail.search.FlagTerm;
 import java.io.IOException;
 import java.io.InputStream;
 import java.lang.invoke.MethodHandles;
@@ -46,19 +60,6 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Properties;
 import java.util.Set;
-import javax.activation.DataSource;
-import javax.mail.AuthenticationFailedException;
-import javax.mail.FetchProfile;
-import javax.mail.Flags;
-import javax.mail.Folder;
-import javax.mail.MessagingException;
-import javax.mail.NoSuchProviderException;
-import javax.mail.Session;
-import javax.mail.Store;
-import javax.mail.Transport;
-import javax.mail.internet.InternetAddress;
-import javax.mail.internet.MimeMessage;
-import javax.mail.search.FlagTerm;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -66,7 +67,7 @@ public class MailAccountServiceImpl implements MailAccountService {
 
   protected final Logger log = LoggerFactory.getLogger(MethodHandles.lookup().lookupClass());
   protected static final int CHECK_CONF_TIMEOUT = 5000;
-  protected final EmailAccountRepository mailAccountRepo;
+  protected final EmailAccountRepository emailAccountRepo;
   protected final CipherService cipherService;
   protected final EmailAddressRepository emailAddressRepo;
   protected final MessageRepository messageRepo;
@@ -74,12 +75,12 @@ public class MailAccountServiceImpl implements MailAccountService {
 
   @Inject
   public MailAccountServiceImpl(
-      EmailAccountRepository mailAccountRepo,
+      EmailAccountRepository emailAccountRepo,
       CipherService cipherService,
       EmailAddressRepository emailAddressRepo,
       MessageRepository messageRepo,
       MetaFiles metaFiles) {
-    this.mailAccountRepo = mailAccountRepo;
+    this.emailAccountRepo = emailAccountRepo;
     this.cipherService = cipherService;
     this.emailAddressRepo = emailAddressRepo;
     this.messageRepo = messageRepo;
@@ -87,41 +88,43 @@ public class MailAccountServiceImpl implements MailAccountService {
   }
 
   @Override
-  public void checkDefaultMailAccount(EmailAccount mailAccount) {
+  public void checkDefaultMailAccount(EmailAccount emailAccount) {
 
-    if (mailAccount.getIsDefault()) {
-      String query = "self.isDefault = true";
-      List<Object> params = Lists.newArrayList();
-      if (mailAccount.getId() != null) {
-        query += " AND self.id != ?1";
-        params.add(mailAccount.getId());
-      }
+    if (!Boolean.TRUE.equals(emailAccount.getIsDefault())) {
+      return;
+    }
 
-      Integer serverTypeSelect = mailAccount.getServerTypeSelect();
-      if (serverTypeSelect == EmailAccountRepository.SERVER_TYPE_SMTP) {
-        query += " AND self.serverTypeSelect = " + EmailAccountRepository.SERVER_TYPE_SMTP + " ";
-      } else if (serverTypeSelect == EmailAccountRepository.SERVER_TYPE_IMAP
-          || serverTypeSelect == EmailAccountRepository.SERVER_TYPE_POP) {
-        query +=
-            " AND (self.serverTypeSelect = "
-                + EmailAccountRepository.SERVER_TYPE_IMAP
-                + " OR "
-                + "self.serverTypeSelect = "
-                + EmailAccountRepository.SERVER_TYPE_POP
-                + ") ";
-      }
+    String query = "self.isDefault = true";
+    List<Object> params = Lists.newArrayList();
+    if (emailAccount.getId() != null) {
+      query += " AND self.id != ?1";
+      params.add(emailAccount.getId());
+    }
 
-      long count = mailAccountRepo.all().filter(query, params.toArray()).count();
-      if (count > 0) {
-        throw new IllegalStateException(I18n.get(MessageExceptionMessage.MAIL_ACCOUNT_5));
-      }
+    Integer serverTypeSelect = emailAccount.getServerTypeSelect();
+    if (serverTypeSelect == EmailAccountRepository.SERVER_TYPE_SMTP) {
+      query += " AND self.serverTypeSelect = " + EmailAccountRepository.SERVER_TYPE_SMTP + " ";
+    } else if (serverTypeSelect == EmailAccountRepository.SERVER_TYPE_IMAP
+        || serverTypeSelect == EmailAccountRepository.SERVER_TYPE_POP) {
+      query +=
+          " AND (self.serverTypeSelect = "
+              + EmailAccountRepository.SERVER_TYPE_IMAP
+              + " OR "
+              + "self.serverTypeSelect = "
+              + EmailAccountRepository.SERVER_TYPE_POP
+              + ") ";
+    }
+
+    long count = emailAccountRepo.all().filter(query, params.toArray()).count();
+    if (count > 0) {
+      throw new IllegalStateException(I18n.get(MessageExceptionMessage.MAIL_ACCOUNT_5));
     }
   }
 
   @Override
   public EmailAccount getDefaultSender() {
 
-    return mailAccountRepo
+    return emailAccountRepo
         .all()
         .filter(
             "self.isDefault = true AND self.serverTypeSelect = ?1",
@@ -132,7 +135,7 @@ public class MailAccountServiceImpl implements MailAccountService {
   @Override
   public EmailAccount getDefaultReader() {
 
-    return mailAccountRepo
+    return emailAccountRepo
         .all()
         .filter(
             "self.isDefault = true "
@@ -144,31 +147,31 @@ public class MailAccountServiceImpl implements MailAccountService {
 
   @Override
   @Transactional(ignore = Exception.class)
-  public void checkMailAccountConfiguration(EmailAccount mailAccount) throws MessagingException {
+  public void checkMailAccountConfiguration(EmailAccount emailAccount) throws MessagingException {
     try {
-      com.axelor.mail.MailAccount account = getMailAccount(mailAccount);
+      com.axelor.mail.MailAccount account = getMailAccount(emailAccount);
       Session session = account.getSession();
 
-      if (mailAccount.getServerTypeSelect().equals(EmailAccountRepository.SERVER_TYPE_SMTP)) {
-        Transport transport = session.getTransport(getProtocol(mailAccount));
+      if (emailAccount.getServerTypeSelect().equals(EmailAccountRepository.SERVER_TYPE_SMTP)) {
+        Transport transport = session.getTransport(getProtocol(emailAccount));
         transport.connect(
-            mailAccount.getHost(),
-            mailAccount.getPort(),
-            mailAccount.getLogin(),
-            mailAccount.getPassword());
+            emailAccount.getHost(),
+            emailAccount.getPort(),
+            emailAccount.getLogin(),
+            emailAccount.getPassword());
         transport.close();
       } else {
         session.getStore().connect();
       }
-      mailAccount.setIsValid(true);
+      emailAccount.setIsValid(true);
     } catch (AuthenticationFailedException e) {
-      mailAccount.setIsValid(false);
+      emailAccount.setIsValid(false);
       throw new IllegalStateException(I18n.get(MessageExceptionMessage.MAIL_ACCOUNT_1), e);
     } catch (NoSuchProviderException e) {
-      mailAccount.setIsValid(false);
+      emailAccount.setIsValid(false);
       throw new IllegalStateException(I18n.get(MessageExceptionMessage.MAIL_ACCOUNT_2), e);
     } finally {
-      mailAccountRepo.save(mailAccount);
+      emailAccountRepo.save(emailAccount);
     }
   }
 
@@ -179,33 +182,32 @@ public class MailAccountServiceImpl implements MailAccountService {
 
     String port = mailAccount.getPort() <= 0 ? null : mailAccount.getPort().toString();
 
-    com.axelor.mail.MailAccount account;
+    MailAccount account =
+        switch (serverType) {
+          case EmailAccountRepository.SERVER_TYPE_SMTP ->
+              new SmtpAccount(
+                  mailAccount.getHost(),
+                  port,
+                  mailAccount.getLogin(),
+                  getDecryptPassword(mailAccount.getPassword()),
+                  getSecurity(mailAccount));
 
-    if (serverType == EmailAccountRepository.SERVER_TYPE_SMTP) {
-      account =
-          new SmtpAccount(
-              mailAccount.getHost(),
-              port,
-              mailAccount.getLogin(),
-              getDecryptPassword(mailAccount.getPassword()),
-              getSecurity(mailAccount));
-    } else if (serverType == EmailAccountRepository.SERVER_TYPE_IMAP) {
-      account =
-          new ImapAccount(
-              mailAccount.getHost(),
-              mailAccount.getPort().toString(),
-              mailAccount.getLogin(),
-              getDecryptPassword(mailAccount.getPassword()),
-              getSecurity(mailAccount));
-    } else {
-      account =
-          new Pop3Account(
-              mailAccount.getHost(),
-              mailAccount.getPort().toString(),
-              mailAccount.getLogin(),
-              getDecryptPassword(mailAccount.getPassword()),
-              getSecurity(mailAccount));
-    }
+          case EmailAccountRepository.SERVER_TYPE_IMAP ->
+              new ImapAccount(
+                  mailAccount.getHost(),
+                  mailAccount.getPort().toString(),
+                  mailAccount.getLogin(),
+                  getDecryptPassword(mailAccount.getPassword()),
+                  getSecurity(mailAccount));
+
+          default ->
+              new Pop3Account(
+                  mailAccount.getHost(),
+                  mailAccount.getPort().toString(),
+                  mailAccount.getLogin(),
+                  getDecryptPassword(mailAccount.getPassword()),
+                  getSecurity(mailAccount));
+        };
 
     Properties props = account.getSession().getProperties();
     if (mailAccount.getFromAddress() != null && !"".equals(mailAccount.getFromAddress())) {
@@ -219,74 +221,59 @@ public class MailAccountServiceImpl implements MailAccountService {
     return account;
   }
 
-  public String getSecurity(EmailAccount mailAccount) {
+  public String getSecurity(EmailAccount emailAccount) {
 
-    if (mailAccount.getSecuritySelect() == EmailAccountRepository.SECURITY_SSL) {
+    if (emailAccount.getSecuritySelect() == EmailAccountRepository.SECURITY_SSL) {
       return MailConstants.CHANNEL_SSL;
-    } else if (mailAccount.getSecuritySelect() == EmailAccountRepository.SECURITY_STARTTLS) {
+    } else if (emailAccount.getSecuritySelect() == EmailAccountRepository.SECURITY_STARTTLS) {
       return MailConstants.CHANNEL_STARTTLS;
     } else {
       return null;
     }
   }
 
-  public String getProtocol(EmailAccount mailAccount) {
+  public String getProtocol(EmailAccount emailAccount) {
 
-    switch (mailAccount.getServerTypeSelect()) {
-      case EmailAccountRepository.SERVER_TYPE_SMTP:
-        return "smtp";
-      case EmailAccountRepository.SERVER_TYPE_IMAP:
-        if (mailAccount.getSecuritySelect() == EmailAccountRepository.SECURITY_SSL) {
-          return MailConstants.PROTOCOL_IMAPS;
+    return switch (emailAccount.getServerTypeSelect()) {
+      case EmailAccountRepository.SERVER_TYPE_SMTP -> "smtp";
+      case EmailAccountRepository.SERVER_TYPE_IMAP -> {
+        if (emailAccount.getSecuritySelect() == EmailAccountRepository.SECURITY_SSL) {
+          yield MailConstants.PROTOCOL_IMAPS;
         }
-        return MailConstants.PROTOCOL_IMAP;
-      case EmailAccountRepository.SERVER_TYPE_POP:
-        return MailConstants.PROTOCOL_POP3;
-      default:
-        return "";
-    }
+        yield MailConstants.PROTOCOL_IMAP;
+      }
+      case EmailAccountRepository.SERVER_TYPE_POP -> MailConstants.PROTOCOL_POP3;
+      default -> "";
+    };
   }
 
-  public String getSignature(EmailAccount mailAccount) {
+  public String getSignature(EmailAccount emailAccount) {
 
-    if (mailAccount != null && mailAccount.getSignature() != null) {
-      return "\n " + mailAccount.getSignature();
+    if (emailAccount != null && emailAccount.getSignature() != null) {
+      return "\n " + emailAccount.getSignature();
     }
     return "";
   }
 
   @Override
-  public int fetchEmails(EmailAccount mailAccount, boolean unseenOnly)
+  public int fetchEmails(EmailAccount emailAccount, boolean unseenOnly)
       throws MessagingException, IOException {
 
-    if (mailAccount == null) {
+    if (emailAccount == null) {
       return 0;
     }
 
-    log.debug(
-        "Fetching emails from host: {}, port: {}, login: {} ",
-        mailAccount.getHost(),
-        mailAccount.getPort(),
-        mailAccount.getLogin());
+    String host = emailAccount.getHost();
+    Integer port = emailAccount.getPort();
+    String login = emailAccount.getLogin();
+    String password = emailAccount.getPassword();
 
-    com.axelor.mail.MailAccount account = null;
-    if (mailAccount.getServerTypeSelect().equals(EmailAccountRepository.SERVER_TYPE_IMAP)) {
-      account =
-          new ImapAccount(
-              mailAccount.getHost(),
-              mailAccount.getPort().toString(),
-              mailAccount.getLogin(),
-              mailAccount.getPassword(),
-              getSecurity(mailAccount));
-    } else {
-      account =
-          new Pop3Account(
-              mailAccount.getHost(),
-              mailAccount.getPort().toString(),
-              mailAccount.getLogin(),
-              mailAccount.getPassword(),
-              getSecurity(mailAccount));
-    }
+    log.debug("Fetching emails from host: {}, port: {}, login: {} ", host, port, login);
+
+    MailAccount account =
+        emailAccount.getServerTypeSelect().equals(EmailAccountRepository.SERVER_TYPE_IMAP)
+            ? new ImapAccount(host, port.toString(), login, password, getSecurity(emailAccount))
+            : new Pop3Account(host, port.toString(), login, password, getSecurity(emailAccount));
 
     MailReader reader = new MailReader(account);
     final Store store = reader.getStore();
@@ -297,7 +284,7 @@ public class MailAccountServiceImpl implements MailAccountService {
 
     // find all unseen messages
     final FetchProfile profile = new FetchProfile();
-    javax.mail.Message[] messages;
+    jakarta.mail.Message[] messages;
     if (unseenOnly) {
       final FlagTerm unseen = new FlagTerm(new Flags(Flags.Flag.SEEN), false);
       messages = inbox.search(unseen);
@@ -312,11 +299,11 @@ public class MailAccountServiceImpl implements MailAccountService {
     log.debug("Total emails unseen: {}", messages.length);
 
     int count = 0;
-    for (javax.mail.Message message : messages) {
-      if (message instanceof MimeMessage) {
-        MailParser parser = new MailParser((MimeMessage) message);
+    for (jakarta.mail.Message message : messages) {
+      if (message instanceof MimeMessage mimeMessage) {
+        MailParser parser = new MailParser(mimeMessage);
         parser.parse();
-        createMessage(mailAccount, parser, message.getSentDate());
+        createMessage(emailAccount, parser, message.getSentDate());
         count++;
       }
     }
@@ -356,7 +343,7 @@ public class MailAccountServiceImpl implements MailAccountService {
 
   private EmailAddress getEmailAddress(InternetAddress address) {
 
-    EmailAddress emailAddress = null;
+    EmailAddress emailAddress;
     emailAddress = emailAddressRepo.findByAddress(address.getAddress());
     if (emailAddress == null) {
       emailAddress = createEmailAddress(address.getAddress());
@@ -401,7 +388,7 @@ public class MailAccountServiceImpl implements MailAccountService {
         InputStream stream = source.getInputStream();
         metaFiles.attach(stream, source.getName(), message);
       } catch (IOException e) {
-        ExceptionHelper.trace(e);
+        ExceptionHelper.error(e);
       }
     }
   }

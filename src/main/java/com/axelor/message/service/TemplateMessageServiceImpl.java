@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -43,18 +43,18 @@ import com.axelor.text.StringTemplates;
 import com.axelor.text.Templates;
 import com.google.common.base.Splitter;
 import com.google.common.base.Strings;
-import com.google.common.collect.Lists;
 import com.google.common.collect.Maps;
 import com.google.common.collect.Sets;
-import com.google.inject.Inject;
 import com.google.inject.persist.Transactional;
+import jakarta.inject.Inject;
+import jakarta.mail.MessagingException;
 import java.io.IOException;
 import java.lang.invoke.MethodHandles;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import javax.mail.MessagingException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -70,7 +70,7 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
   protected final MailAccountService mailAccountService;
   protected final TemplateContextService templateContextService;
 
-  protected final MailMessageActionService mailMessageActionService;
+  protected final MessageActionService messageActionService;
   protected final MessageRepository messageRepository;
   protected final TemplateRepository templateRepository;
   protected final EmailAddressRepository emailAddressRepository;
@@ -85,14 +85,14 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
       MailAccountService mailAccountService,
       MessageService messageService,
       TemplateContextService templateContextService,
-      MailMessageActionService mailMessageActionService) {
+      MessageActionService messageActionService) {
     this.emailAddressRepository = emailAddressRepository;
     this.templateRepository = templateRepository;
     this.messageRepository = messageRepository;
     this.messageService = messageService;
     this.mailAccountService = mailAccountService;
     this.templateContextService = templateContextService;
-    this.mailMessageActionService = mailMessageActionService;
+    this.messageActionService = messageActionService;
     this.groovyTemplates = groovyTemplates;
   }
 
@@ -102,15 +102,16 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
   }
 
   @Override
-  public Message generateMessage(Model model, Template template, Boolean isTemporaryMessage)
+  public Message generateMessage(Model model, Template template, boolean isTemporaryMessage)
       throws ClassNotFoundException {
 
     this.modelObject = model;
     Class<?> klass = EntityHelper.getEntityClass(model);
+    boolean isJson = Boolean.TRUE.equals(template.getIsJson());
     return generateMessage(
         model.getId() == null ? 0L : model.getId(),
-        template.getIsJson() ? ((MetaJsonModel) model).getName() : klass.getCanonicalName(),
-        template.getIsJson() ? ((MetaJsonModel) model).getName() : klass.getSimpleName(),
+        isJson ? ((MetaJsonModel) model).getName() : klass.getCanonicalName(),
+        isJson ? ((MetaJsonModel) model).getName() : klass.getSimpleName(),
         template,
         isTemporaryMessage);
   }
@@ -124,7 +125,7 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
   @Override
   @Transactional(rollbackOn = {Exception.class})
   public Message generateMessage(
-      Long objectId, String model, String tag, Template template, Boolean isForTemporaryEmail)
+      Long objectId, String model, String tag, Template template, boolean isForTemporaryEmail)
       throws ClassNotFoundException {
     Templates templates;
     Map<String, Object> templatesContext = Maps.newHashMap();
@@ -152,11 +153,11 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
         generateMessage(
             model, objectId, template, templates, templatesContext, isForTemporaryEmail);
 
-    if (Boolean.FALSE.equals(isForTemporaryEmail)) {
+    if (!isForTemporaryEmail) {
       log.debug("Saving message with meta files");
       message = saveMessageWithMetaFiles(template, message, templates, templatesContext);
       log.debug("Execute Post mail message actions");
-      message = mailMessageActionService.executePostMailMessageActions(message);
+      message = messageActionService.executePostMessageActions(message);
     }
 
     return message;
@@ -243,7 +244,7 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
       Template template,
       Templates templates,
       Map<String, Object> templatesContext,
-      Boolean isForTemporaryEmail) {
+      boolean isForTemporaryEmail) {
 
     String content = "";
     String subject = "";
@@ -382,10 +383,11 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
 
     if (isJson) {
       templatesContext.put(tag, JPA.find(MetaJsonRecord.class, objectId));
-    } else {
-      Class<? extends Model> myClass = (Class<? extends Model>) Class.forName(model);
-      templatesContext.put(tag, JPA.find(myClass, objectId));
+      return templatesContext;
     }
+
+    Class<? extends Model> myClass = (Class<? extends Model>) Class.forName(model);
+    templatesContext.put(tag, JPA.find(myClass, objectId));
 
     return templatesContext;
   }
@@ -421,31 +423,28 @@ public class TemplateMessageServiceImpl implements TemplateMessageService {
   }
 
   /**
-   * This method is used to return a list of email addresses from recipients string
+   * Return a list of email addresses from the {@code recipients} string.
    *
    * @param recipients
    * @return
    */
   protected List<EmailAddress> getEmailAddresses(String recipients) {
 
-    List<EmailAddress> emailAddressList = Lists.newArrayList();
     if (Strings.isNullOrEmpty(recipients)) {
-      return emailAddressList;
+      return Collections.emptyList();
     }
 
-    for (String recipient :
-        Splitter.onPattern(RECIPIENT_SEPARATOR)
-            .trimResults()
-            .omitEmptyStrings()
-            .splitToList(recipients)) {
-      emailAddressList.add(getMailAddress(recipient));
-    }
-    return emailAddressList;
+    return Splitter.onPattern(RECIPIENT_SEPARATOR)
+        .trimResults()
+        .omitEmptyStrings()
+        .splitToList(recipients)
+        .stream()
+        .map(this::getMailAddress)
+        .toList();
   }
 
   /**
-   * This method is used to get EmailAddress by recipient string, or create it otherwise if it's not
-   * found
+   * Get {@link EmailAddress} by {@code recipient} string or create it if it's not found.
    *
    * @param recipient
    * @return

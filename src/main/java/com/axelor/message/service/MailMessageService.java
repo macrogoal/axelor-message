@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -19,11 +19,12 @@ package com.axelor.message.service;
 
 import com.axelor.auth.db.User;
 import com.axelor.db.Model;
+import com.axelor.mail.db.MailMessage;
 
 public interface MailMessageService {
 
   /**
-   * Send notification to user via AOP MailMessage from a process.
+   * Send notification to the user via AOP {@link MailMessage} from a process.
    *
    * @param user the user which is going to have the notification
    * @param subject the subject of the message
@@ -32,7 +33,7 @@ public interface MailMessageService {
   void sendNotification(User user, String subject, String body);
 
   /**
-   * Send notification to user via AOP MailMessage from a process.
+   * Send notification to the user via AOP {@link MailMessage} from a process.
    *
    * @param user the user which is going to have the notification
    * @param subject the subject of the message

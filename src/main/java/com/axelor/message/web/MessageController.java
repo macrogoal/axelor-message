@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -23,6 +23,7 @@ import com.axelor.message.db.Message;
 import com.axelor.message.db.repo.MessageRepository;
 import com.axelor.message.exception.MessageExceptionMessage;
 import com.axelor.message.service.MessageService;
+import com.axelor.meta.schema.actions.ActionView;
 import com.axelor.rpc.ActionRequest;
 import com.axelor.rpc.ActionResponse;
 import com.axelor.utils.helpers.ExceptionHelper;
@@ -46,7 +47,7 @@ public class MessageController {
         response.setError(I18n.get(MessageExceptionMessage.MESSAGE_7));
       }
     } catch (Exception e) {
-      ExceptionHelper.trace(response, e);
+      ExceptionHelper.error(response, e);
     }
   }
 
@@ -56,7 +57,7 @@ public class MessageController {
       List<Integer> idList = (List<Integer>) request.getContext().get("_ids");
 
       if (idList == null) {
-        ExceptionHelper.trace(
+        ExceptionHelper.error(
             response, I18n.get(MessageExceptionMessage.MESSAGE_MISSING_SELECTED_MESSAGES));
         return;
       }
@@ -67,7 +68,7 @@ public class MessageController {
               I18n.get(MessageExceptionMessage.MESSAGES_SEND_IN_PROGRESS), idList.size()));
       response.setReload(true);
     } catch (Exception e) {
-      ExceptionHelper.trace(response, e);
+      ExceptionHelper.error(response, e);
     }
   }
 
@@ -77,7 +78,7 @@ public class MessageController {
       List<Integer> idList = (List<Integer>) request.getContext().get("_ids");
 
       if (idList == null) {
-        ExceptionHelper.trace(
+        ExceptionHelper.error(
             response, I18n.get(MessageExceptionMessage.MESSAGE_MISSING_SELECTED_MESSAGES));
         return;
       }
@@ -90,7 +91,7 @@ public class MessageController {
               error));
       response.setReload(true);
     } catch (Exception e) {
-      ExceptionHelper.trace(response, e);
+      ExceptionHelper.error(response, e);
     }
   }
 
@@ -98,7 +99,28 @@ public class MessageController {
     try {
       response.setValues(request.getContext().get("_message"));
     } catch (Exception e) {
-      ExceptionHelper.trace(response, e);
+      ExceptionHelper.error(response, e);
+    }
+  }
+
+  public void printMessage(ActionRequest request, ActionResponse response) {
+
+    try {
+      Message message = request.getContext().asType(Message.class);
+      message = Beans.get(MessageRepository.class).find(message.getId());
+      String pdfPath = Beans.get(MessageService.class).printMessage(message);
+
+      if (pdfPath != null) {
+
+        response.setView(
+            ActionView.define(I18n.get("Message") + " " + message.getSubject())
+                .add("html", pdfPath)
+                .map());
+
+      } else response.setInfo(I18n.get(MessageExceptionMessage.REPORT_CONFIG_PRINT_SETTING));
+
+    } catch (Exception e) {
+      ExceptionHelper.error(response, e);
     }
   }
 }

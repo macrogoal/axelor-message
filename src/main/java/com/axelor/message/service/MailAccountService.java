@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -19,31 +19,31 @@ package com.axelor.message.service;
 
 import com.axelor.mail.MailAccount;
 import com.axelor.message.db.EmailAccount;
+import jakarta.mail.MessagingException;
 import java.io.IOException;
-import javax.mail.MessagingException;
 
 public interface MailAccountService {
 
-  public void checkDefaultMailAccount(EmailAccount mailAccount);
+  void checkDefaultMailAccount(EmailAccount emailAccount);
 
-  public EmailAccount getDefaultSender();
+  EmailAccount getDefaultSender();
 
-  public EmailAccount getDefaultReader();
+  EmailAccount getDefaultReader();
 
-  public void checkMailAccountConfiguration(EmailAccount mailAccount) throws MessagingException;
+  void checkMailAccountConfiguration(EmailAccount emailAccount) throws MessagingException;
 
-  public MailAccount getMailAccount(EmailAccount mailAccount);
+  MailAccount getMailAccount(EmailAccount mailAccount);
 
-  public String getSecurity(EmailAccount mailAccount);
+  String getSecurity(EmailAccount emailAccount);
 
-  public String getProtocol(EmailAccount mailAccount);
+  String getProtocol(EmailAccount emailAccount);
 
-  public String getSignature(EmailAccount mailAccount);
+  String getSignature(EmailAccount emailAccount);
 
-  public int fetchEmails(EmailAccount mailAccount, boolean unseenOnly)
+  int fetchEmails(EmailAccount emailAccount, boolean unseenOnly)
       throws MessagingException, IOException;
 
-  public String getEncryptPassword(String password);
+  String getEncryptPassword(String password);
 
-  public String getDecryptPassword(String password);
+  String getDecryptPassword(String password);
 }

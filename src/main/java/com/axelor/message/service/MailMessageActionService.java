@@ -1,7 +1,8 @@
 package com.axelor.message.service;
 
-import com.axelor.message.db.Message;
+import com.axelor.db.Model;
+import com.axelor.mail.db.MailMessage;
 
 public interface MailMessageActionService {
-  Message executePostMailMessageActions(Message message);
+  MailMessage executePreMailMessageActions(MailMessage message, Model relatedRecord);
 }

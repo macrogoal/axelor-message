@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -93,7 +93,7 @@ public class GenerateMessageController {
       }
 
     } catch (Exception e) {
-      ExceptionHelper.trace(response, e);
+      ExceptionHelper.error(response, e);
     }
   }
 
@@ -108,7 +108,7 @@ public class GenerateMessageController {
                 .find(Long.parseLong(templateContext.get("id").toString()));
       }
 
-      Long objectId = Long.parseLong(context.get("_objectId").toString());
+      long objectId = Long.parseLong(context.get("_objectId").toString());
       String model = (String) context.get("_templateContextModel");
       String tag = (String) context.get("_tag");
 
@@ -116,13 +116,13 @@ public class GenerateMessageController {
           Beans.get(GenerateMessageService.class).generateMessage(objectId, model, tag, template));
       response.setCanClose(true);
     } catch (Exception e) {
-      ExceptionHelper.trace(response, e);
+      ExceptionHelper.error(response, e);
     }
   }
 
   /**
-   * This method is used to update dummyField _xTemplate domain attribute in GenerateMessageWizard
-   * to filter template based on the selected language
+   * Update the domain attribute of the dummy field {@code _xTemplate} in {@code
+   * generate-message-wizard-form}, to filter the template based on the selected language.
    */
   public void templateDomain(ActionRequest request, ActionResponse response) {
     Context context = request.getContext();
@@ -131,28 +131,17 @@ public class GenerateMessageController {
     LOG.info("Applying language filter ...");
 
     Object languageObj = context.get("language");
-    String language = null;
+
+    String domain = "self.metaModel.fullName = '" + model + "' and self.isSystem != true";
     if (languageObj == null) {
       LOG.info("No selected language");
-    } else if (languageObj instanceof String) {
-      language = (String) languageObj;
+    } else if (languageObj instanceof String language) {
+      domain += " and self.language = '" + language + "'";
       LOG.info("Language selected : {}", language);
     } else {
       LOG.error("Language parse error");
     }
 
-    String domain;
-
-    if (language == null) {
-      domain = "self.metaModel.fullName = '" + model + "' and self.isSystem != true";
-    } else {
-      domain =
-          "self.metaModel.fullName = '"
-              + model
-              + "' and self.isSystem != true and self.language = '"
-              + language
-              + "'";
-    }
     LOG.debug("Applying filter {} on template", domain);
     response.setAttr("_xTemplate", "domain", domain);
   }

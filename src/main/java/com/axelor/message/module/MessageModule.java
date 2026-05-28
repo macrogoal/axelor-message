@@ -1,7 +1,7 @@
 /*
  * Axelor Business Solutions
  *
- * Copyright (C) 2025 Axelor (<http://axelor.com>).
+ * Copyright (C) 2026 Axelor (<http://axelor.com>).
  *
  * This program is free software: you can redistribute it and/or  modify
  * it under the terms of the GNU Affero General Public License, version 3,
@@ -23,7 +23,7 @@ import com.axelor.message.db.repo.EmailAddressRepo;
 import com.axelor.message.db.repo.EmailAddressRepository;
 import com.axelor.message.db.repo.MessageManagementRepository;
 import com.axelor.message.db.repo.MessageRepository;
-import com.axelor.message.listener.MailMessageServerStartListener;
+import com.axelor.message.listener.ServerStartListener;
 import com.axelor.message.service.AppSettingsMessageService;
 import com.axelor.message.service.AppSettingsMessageServiceImpl;
 import com.axelor.message.service.GenerateMessageService;
@@ -37,6 +37,8 @@ import com.axelor.message.service.MailMessageCreatorImpl;
 import com.axelor.message.service.MailMessageService;
 import com.axelor.message.service.MailMessageServiceImpl;
 import com.axelor.message.service.MailServiceMessageImpl;
+import com.axelor.message.service.MessageActionService;
+import com.axelor.message.service.MessageActionServiceImpl;
 import com.axelor.message.service.MessageService;
 import com.axelor.message.service.MessageServiceImpl;
 import com.axelor.message.service.SendMailQueueService;
@@ -47,6 +49,7 @@ import com.axelor.message.service.TemplateMessageServiceImpl;
 import com.axelor.message.service.TemplateService;
 import com.axelor.message.service.TemplateServiceImpl;
 import com.axelor.message.service.registry.MailMessageActionRegister;
+import com.axelor.message.service.registry.MessageActionRegister;
 import com.axelor.utils.service.AppSettingsServiceImpl;
 import com.google.inject.Singleton;
 
@@ -65,13 +68,17 @@ public class MessageModule extends AxelorModule {
     bind(AppSettingsServiceImpl.class).to(AppSettingsMessageServiceImpl.class);
     bind(MailMessageCreator.class).to(MailMessageCreatorImpl.class);
     bind(MailMessageActionService.class).to(MailMessageActionServiceImpl.class);
+    bind(MessageActionService.class).to(MessageActionServiceImpl.class);
     bind(TemplateContextService.class).to(TemplateContextServiceImpl.class);
     bind(MailMessageActionRegister.class).in(Singleton.class);
+    bind(MessageActionRegister.class).in(Singleton.class);
+    bind(TemplateService.class).to(TemplateServiceImpl.class);
+    bind(EmailAddressRepository.class).to(EmailAddressRepo.class);
+
     // needed to use event notification methods
     bind(SendMailQueueService.class);
-    bind(TemplateService.class).to(TemplateServiceImpl.class);
-    // needed to scan classes that implements the MailMessageAction in the startup
-    bind(MailMessageServerStartListener.class);
-    bind(EmailAddressRepository.class).to(EmailAddressRepo.class);
+
+    // needed to scan classes that implement MailMessageAction and MessageAction in the startup
+    bind(ServerStartListener.class);
   }
 }
